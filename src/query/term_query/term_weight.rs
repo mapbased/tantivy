@@ -1,50 +1,82 @@
-use Term;
-use query::Weight;
-use core::SegmentReader;
-use query::Scorer;
-use postings::SegmentPostingsOption;
-use postings::SegmentPostings;
 use super::term_scorer::TermScorer;
-use Result;
+use crate::core::SegmentReader;
+use crate::docset::DocSet;
+use crate::postings::SegmentPostings;
+use crate::query::bm25::BM25Weight;
+use crate::query::explanation::does_not_match;
+use crate::query::Weight;
+use crate::query::{Explanation, Scorer};
+use crate::schema::IndexRecordOption;
+use crate::DocId;
+use crate::Term;
+use crate::{Result, SkipResult};
 
 pub struct TermWeight {
-    pub num_docs: u32,
-    pub doc_freq: u32,
-    pub term: Term,
-    pub segment_postings_options: SegmentPostingsOption,
+    term: Term,
+    index_record_option: IndexRecordOption,
+    similarity_weight: BM25Weight,
 }
 
-
 impl Weight for TermWeight {
-    fn scorer<'a>(&'a self, reader: &'a SegmentReader) -> Result<Box<Scorer + 'a>> {
-        let specialized_scorer = try!(self.specialized_scorer(reader));
-        Ok(box specialized_scorer)
+    fn scorer(&self, reader: &SegmentReader) -> Result<Box<dyn Scorer>> {
+        let term_scorer = self.scorer_specialized(reader)?;
+        Ok(Box::new(term_scorer))
+    }
+
+    fn explain(&self, reader: &SegmentReader, doc: DocId) -> Result<Explanation> {
+        let mut scorer = self.scorer_specialized(reader)?;
+        if scorer.skip_next(doc) != SkipResult::Reached {
+            return Err(does_not_match(doc));
+        }
+        Ok(scorer.explain())
+    }
+
+    fn count(&self, reader: &SegmentReader) -> Result<u32> {
+        if let Some(delete_bitset) = reader.delete_bitset() {
+            Ok(self.scorer(reader)?.count(delete_bitset))
+        } else {
+            let field = self.term.field();
+            Ok(reader
+                .inverted_index(field)
+                .get_term_info(&self.term)
+                .map(|term_info| term_info.doc_freq)
+                .unwrap_or(0))
+        }
     }
 }
 
 impl TermWeight {
-    fn idf(&self) -> f32 {
-        1.0 + (self.num_docs as f32 / (self.doc_freq as f32 + 1.0)).ln()
+    pub fn new(
+        term: Term,
+        index_record_option: IndexRecordOption,
+        similarity_weight: BM25Weight,
+    ) -> TermWeight {
+        TermWeight {
+            term,
+            index_record_option,
+            similarity_weight,
+        }
     }
 
-    pub fn specialized_scorer<'a>(&'a self,
-                                  reader: &'a SegmentReader)
-                                  -> Result<TermScorer<SegmentPostings<'a>>> {
+    fn scorer_specialized(&self, reader: &SegmentReader) -> Result<TermScorer> {
         let field = self.term.field();
-        let fieldnorm_reader_opt = reader.get_fieldnorms_reader(field);
-        Ok(reader
-               .read_postings(&self.term, self.segment_postings_options)
-               .map(|segment_postings| {
-                        TermScorer {
-                            idf: self.idf(),
-                            fieldnorm_reader_opt: fieldnorm_reader_opt,
-                            postings: segment_postings,
-                        }
-                    })
-               .unwrap_or(TermScorer {
-                              idf: 1f32,
-                              fieldnorm_reader_opt: None,
-                              postings: SegmentPostings::empty(),
-                          }))
+        let inverted_index = reader.inverted_index(field);
+        let fieldnorm_reader = reader.get_fieldnorms_reader(field);
+        let similarity_weight = self.similarity_weight.clone();
+        let postings_opt: Option<SegmentPostings> =
+            inverted_index.read_postings(&self.term, self.index_record_option);
+        if let Some(segment_postings) = postings_opt {
+            Ok(TermScorer::new(
+                segment_postings,
+                fieldnorm_reader,
+                similarity_weight,
+            ))
+        } else {
+            Ok(TermScorer::new(
+                SegmentPostings::empty(),
+                fieldnorm_reader,
+                similarity_weight,
+            ))
+        }
     }
 }

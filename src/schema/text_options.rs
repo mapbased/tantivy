@@ -1,17 +1,20 @@
+use crate::schema::flags::SchemaFlagList;
+use crate::schema::flags::StoredFlag;
+use crate::schema::IndexRecordOption;
+use std::borrow::Cow;
 use std::ops::BitOr;
 
-
 /// Define how a text field should be handled by tantivy.
-#[derive(Clone,Debug,PartialEq,Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextOptions {
-    indexing: TextIndexingOptions,
+    indexing: Option<TextFieldIndexing>,
     stored: bool,
 }
 
 impl TextOptions {
     /// Returns the indexing options.
-    pub fn get_indexing_options(&self) -> TextIndexingOptions {
-        self.indexing
+    pub fn get_indexing_options(&self) -> Option<&TextFieldIndexing> {
+        self.indexing.as_ref()
     }
 
     /// Returns true iff the text is to be stored.
@@ -26,8 +29,8 @@ impl TextOptions {
     }
 
     /// Sets the field as indexed, with the specific indexing options.
-    pub fn set_indexing_options(mut self, indexing: TextIndexingOptions) -> TextOptions {
-        self.indexing = indexing;
+    pub fn set_indexing_options(mut self, indexing: TextFieldIndexing) -> TextOptions {
+        self.indexing = Some(indexing);
         self
     }
 }
@@ -35,163 +38,152 @@ impl TextOptions {
 impl Default for TextOptions {
     fn default() -> TextOptions {
         TextOptions {
-            indexing: TextIndexingOptions::Unindexed,
+            indexing: None,
             stored: false,
         }
     }
 }
 
+/// Configuration defining indexing for a text field.
+///
+/// It defines
+/// - the amount of information that should be stored about the presence of a term in a document.
+/// Essentially, should we store the term frequency and/or the positions (See [`IndexRecordOption`](./enum.IndexRecordOption.html)).
+/// - the name of the `Tokenizer` that should be used to process the field.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct TextFieldIndexing {
+    record: IndexRecordOption,
+    tokenizer: Cow<'static, str>,
+}
 
+impl Default for TextFieldIndexing {
+    fn default() -> TextFieldIndexing {
+        TextFieldIndexing {
+            tokenizer: Cow::Borrowed("default"),
+            record: IndexRecordOption::Basic,
+        }
+    }
+}
 
+impl TextFieldIndexing {
+    /// Sets the tokenizer to be used for a given field.
+    pub fn set_tokenizer(mut self, tokenizer_name: &str) -> TextFieldIndexing {
+        self.tokenizer = Cow::Owned(tokenizer_name.to_string());
+        self
+    }
 
-/// Describe how a field should be indexed
-#[derive(Clone,Copy,Debug,PartialEq,PartialOrd,Eq,Hash, Serialize, Deserialize)]
-pub enum TextIndexingOptions {
-    /// Unindexed fields will not generate any postings. They will not be searchable either.
-    #[serde(rename="unindexed")]
-    Unindexed,
-    /// Untokenized means that the field text will not be split into tokens before being indexed.
-    /// A field with the value "Hello world", will have the document suscribe to one single
-    /// postings, the postings associated to the string "Hello world".
+    /// Returns the tokenizer that will be used for this field.
+    pub fn tokenizer(&self) -> &str {
+        &self.tokenizer
+    }
+
+    /// Sets which information should be indexed with the tokens.
     ///
-    /// It will **not** be searchable if the user enter "hello" for instance.
-    /// This can be useful for tags, or ids for instance.
-    #[serde(rename="untokenized")]
-    Untokenized,
-    /// TokenizedNoFreq will tokenize the field value, and append the document doc id
-    /// to the posting lists associated to all of the tokens.
-    /// The frequence of appearance of the term in the document however will be lost.
-    /// The term frequency used in the TfIdf formula will always be 1.
-    #[serde(rename="tokenize")]
-    TokenizedNoFreq,
-    /// TokenizedWithFreq will tokenize the field value, and encode
-    /// both the docid and the term frequency in the posting lists associated to all
-    #[serde(rename="freq")]
-    TokenizedWithFreq,
-    /// Like TokenizedWithFreq, but also encodes the positions of the
-    /// terms in a separate file. This option is required for phrase queries.
-    /// Don't use this if you are certain you won't need it, the term positions file
-    /// can be very big.
-    #[serde(rename="position")]
-    TokenizedWithFreqAndPosition,
-}
-
-impl TextIndexingOptions {
-    /// Returns true iff the term frequency will be encoded.
-    pub fn is_termfreq_enabled(&self) -> bool {
-        match *self {
-            TextIndexingOptions::TokenizedWithFreq |
-            TextIndexingOptions::TokenizedWithFreqAndPosition => true,
-            _ => false,
-        }
+    /// See [IndexRecordOption](./enum.IndexRecordOption.html) for more detail.
+    pub fn set_index_option(mut self, index_option: IndexRecordOption) -> TextFieldIndexing {
+        self.record = index_option;
+        self
     }
 
-    /// Returns true iff the term is tokenized before being indexed
-    pub fn is_tokenized(&self) -> bool {
-        match *self {
-            TextIndexingOptions::TokenizedNoFreq |
-            TextIndexingOptions::TokenizedWithFreq |
-            TextIndexingOptions::TokenizedWithFreqAndPosition => true,
-            _ => false,
-        }
-    }
-
-
-    /// Returns true iff the term will generate some posting lists.
-    pub fn is_indexed(&self) -> bool {
-        match *self {
-            TextIndexingOptions::Unindexed => false,
-            _ => true,
-        }
-    }
-
-    /// Returns true iff the term positions within the document are stored as well.
-    pub fn is_position_enabled(&self) -> bool {
-        match *self {
-            TextIndexingOptions::TokenizedWithFreqAndPosition => true,
-            _ => false,
-        }
+    /// Returns the indexing options associated to this field.
+    ///
+    /// See [IndexRecordOption](./enum.IndexRecordOption.html) for more detail.
+    pub fn index_option(&self) -> IndexRecordOption {
+        self.record
     }
 }
-
-
-impl BitOr for TextIndexingOptions {
-    type Output = TextIndexingOptions;
-
-    fn bitor(self, other: TextIndexingOptions) -> TextIndexingOptions {
-        use super::TextIndexingOptions::*;
-        if self == Unindexed {
-            other
-        } else if other == Unindexed || self == other {
-            self
-        } else {
-            // make it possible
-            panic!(format!("Combining {:?} and {:?} is ambiguous", self, other));
-        }
-    }
-}
-
 
 /// The field will be untokenized and indexed
 pub const STRING: TextOptions = TextOptions {
-    indexing: TextIndexingOptions::Untokenized,
+    indexing: Some(TextFieldIndexing {
+        tokenizer: Cow::Borrowed("raw"),
+        record: IndexRecordOption::Basic,
+    }),
     stored: false,
 };
-
 
 /// The field will be tokenized and indexed
 pub const TEXT: TextOptions = TextOptions {
-    indexing: TextIndexingOptions::TokenizedWithFreqAndPosition,
+    indexing: Some(TextFieldIndexing {
+        tokenizer: Cow::Borrowed("default"),
+        record: IndexRecordOption::WithFreqsAndPositions,
+    }),
     stored: false,
 };
 
-/// A stored fields of a document can be retrieved given its `DocId`.
-/// Stored field are stored together and LZ4 compressed.
-/// Reading the stored fields of a document is relatively slow.
-/// (100 microsecs)
-pub const STORED: TextOptions = TextOptions {
-    indexing: TextIndexingOptions::Unindexed,
-    stored: true,
-};
-
-
-impl BitOr for TextOptions {
+impl<T: Into<TextOptions>> BitOr<T> for TextOptions {
     type Output = TextOptions;
 
-    fn bitor(self, other: TextOptions) -> TextOptions {
+    fn bitor(self, other: T) -> TextOptions {
+        let other = other.into();
         let mut res = TextOptions::default();
-        res.indexing = self.indexing | other.indexing;
+        res.indexing = self.indexing.or(other.indexing);
         res.stored = self.stored | other.stored;
         res
     }
 }
 
+impl From<()> for TextOptions {
+    fn from(_: ()) -> TextOptions {
+        TextOptions::default()
+    }
+}
+
+impl From<StoredFlag> for TextOptions {
+    fn from(_: StoredFlag) -> TextOptions {
+        TextOptions {
+            indexing: None,
+            stored: true,
+        }
+    }
+}
+
+impl<Head, Tail> From<SchemaFlagList<Head, Tail>> for TextOptions
+where
+    Head: Clone,
+    Tail: Clone,
+    Self: BitOr<Output = Self> + From<Head> + From<Tail>,
+{
+    fn from(head_tail: SchemaFlagList<Head, Tail>) -> Self {
+        Self::from(head_tail.head) | Self::from(head_tail.tail)
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use schema::*;
+    use crate::schema::*;
 
     #[test]
     fn test_field_options() {
         {
             let field_options = STORED | TEXT;
             assert!(field_options.is_stored());
-            assert!(field_options.get_indexing_options().is_tokenized());
+            assert!(field_options.get_indexing_options().is_some());
         }
         {
-            let mut schema_builder = SchemaBuilder::default();
+            let mut schema_builder = Schema::builder();
             schema_builder.add_text_field("body", TEXT);
             let schema = schema_builder.build();
             let field = schema.get_field("body").unwrap();
             let field_entry = schema.get_field_entry(field);
             match field_entry.field_type() {
                 &FieldType::Str(ref text_options) => {
-                    assert!(text_options.get_indexing_options().is_tokenized());
+                    assert!(text_options.get_indexing_options().is_some());
+                    assert_eq!(
+                        text_options.get_indexing_options().unwrap().tokenizer(),
+                        "default"
+                    );
                 }
                 _ => {
                     panic!("");
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_cmp_index_record_option() {
+        assert!(IndexRecordOption::WithFreqsAndPositions > IndexRecordOption::WithFreqs);
+        assert!(IndexRecordOption::WithFreqs > IndexRecordOption::Basic);
     }
 }

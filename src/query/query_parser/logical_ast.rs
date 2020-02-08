@@ -1,14 +1,23 @@
+use crate::query::Occur;
+use crate::schema::Field;
+use crate::schema::Term;
+use crate::schema::Type;
 use std::fmt;
-use schema::Term;
-use query::Occur;
+use std::ops::Bound;
 
 #[derive(Clone)]
 pub enum LogicalLiteral {
     Term(Term),
-    Phrase(Vec<Term>),
+    Phrase(Vec<(usize, Term)>),
+    Range {
+        field: Field,
+        value_type: Type,
+        lower: Bound<Term>,
+        upper: Bound<Term>,
+    },
+    All,
 }
 
-#[derive(Clone)]
 pub enum LogicalAST {
     Clause(Vec<(Occur, LogicalAST)>),
     Leaf(Box<LogicalLiteral>),
@@ -23,18 +32,18 @@ fn occur_letter(occur: Occur) -> &'static str {
 }
 
 impl fmt::Debug for LogicalAST {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match *self {
             LogicalAST::Clause(ref clause) => {
                 if clause.is_empty() {
-                    try!(write!(formatter, "<emptyclause>"));
+                    write!(formatter, "<emptyclause>")?;
                 } else {
                     let (ref occur, ref subquery) = clause[0];
-                    try!(write!(formatter, "({}{:?}", occur_letter(*occur), subquery));
+                    write!(formatter, "({}{:?}", occur_letter(*occur), subquery)?;
                     for &(ref occur, ref subquery) in &clause[1..] {
-                        try!(write!(formatter, " {}{:?}", occur_letter(*occur), subquery));
+                        write!(formatter, " {}{:?}", occur_letter(*occur), subquery)?;
                     }
-                    try!(formatter.write_str(")"));
+                    formatter.write_str(")")?;
                 }
                 Ok(())
             }
@@ -45,15 +54,21 @@ impl fmt::Debug for LogicalAST {
 
 impl From<LogicalLiteral> for LogicalAST {
     fn from(literal: LogicalLiteral) -> LogicalAST {
-        LogicalAST::Leaf(box literal)
+        LogicalAST::Leaf(Box::new(literal))
     }
 }
 
 impl fmt::Debug for LogicalLiteral {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match *self {
             LogicalLiteral::Term(ref term) => write!(formatter, "{:?}", term),
             LogicalLiteral::Phrase(ref terms) => write!(formatter, "\"{:?}\"", terms),
+            LogicalLiteral::Range {
+                ref lower,
+                ref upper,
+                ..
+            } => write!(formatter, "({:?} TO {:?})", lower, upper),
+            LogicalLiteral::All => write!(formatter, "*"),
         }
     }
 }
