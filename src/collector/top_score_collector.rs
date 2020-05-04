@@ -66,7 +66,7 @@ struct ScorerByFastFieldReader {
 }
 
 impl CustomSegmentScorer<u64> for ScorerByFastFieldReader {
-    fn score(&self, doc: DocId) -> u64 {
+    fn score(&mut self, doc: DocId) -> u64 {
         self.ff_reader.get_u64(u64::from(doc))
     }
 }
@@ -84,7 +84,8 @@ impl CustomScorer<u64> for ScorerByField {
             .u64(self.field)
             .ok_or_else(|| {
                 crate::TantivyError::SchemaError(format!(
-                    "Field requested is not a i64/u64 fast field."
+                    "Field requested ({:?}) is not a i64/u64 fast field.",
+                    self.field
                 ))
             })?;
         Ok(ScorerByFastFieldReader { ff_reader })
@@ -449,7 +450,6 @@ mod tests {
     use crate::Index;
     use crate::IndexWriter;
     use crate::Score;
-    use itertools::Itertools;
 
     fn make_index() -> Index {
         let mut schema_builder = Schema::builder();
@@ -523,8 +523,8 @@ mod tests {
 
         // precondition for the test to be meaningful: we did get documents
         // with the same score
-        assert!(page_1.iter().map(|result| result.0).all_equal());
-        assert!(page_2.iter().map(|result| result.0).all_equal());
+        assert!(page_1.iter().all(|result| result.0 == page_1[0].0));
+        assert!(page_2.iter().all(|result| result.0 == page_2[0].0));
 
         // sanity check since we're relying on make_index()
         assert_eq!(page_1.len(), 2);
@@ -614,7 +614,10 @@ mod tests {
         let top_collector = TopDocs::with_limit(4).order_by_u64_field(size);
         let err = top_collector.for_segment(0, segment);
         if let Err(crate::TantivyError::SchemaError(msg)) = err {
-            assert_eq!(msg, "Field requested is not a i64/u64 fast field.");
+            assert_eq!(
+                msg,
+                "Field requested (Field(1)) is not a i64/u64 fast field."
+            );
         } else {
             assert!(false);
         }

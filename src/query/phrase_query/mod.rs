@@ -7,18 +7,17 @@ pub use self::phrase_scorer::PhraseScorer;
 pub use self::phrase_weight::PhraseWeight;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use super::*;
     use crate::collector::tests::{TEST_COLLECTOR_WITHOUT_SCORE, TEST_COLLECTOR_WITH_SCORE};
     use crate::core::Index;
-    use crate::error::TantivyError;
     use crate::schema::{Schema, Term, TEXT};
     use crate::tests::assert_nearly_equals;
+    use crate::DocAddress;
     use crate::DocId;
-    use crate::{DocAddress, DocSet};
 
-    fn create_index(texts: &[&'static str]) -> Index {
+    pub fn create_index(texts: &[&'static str]) -> Index {
         let mut schema_builder = Schema::builder();
         let text_field = schema_builder.add_text_field("text", TEXT);
         let schema = schema_builder.build();
@@ -103,30 +102,6 @@ mod tests {
     }
 
     #[test]
-    pub fn test_phrase_count() {
-        let index = create_index(&["a c", "a a b d a b c", " a b"]);
-        let schema = index.schema();
-        let text_field = schema.get_field("text").unwrap();
-        let searcher = index.reader().unwrap().searcher();
-        let phrase_query = PhraseQuery::new(vec![
-            Term::from_field_text(text_field, "a"),
-            Term::from_field_text(text_field, "b"),
-        ]);
-        let phrase_weight = phrase_query.phrase_weight(&searcher, true).unwrap();
-        let mut phrase_scorer = phrase_weight
-            .phrase_scorer(searcher.segment_reader(0u32))
-            .unwrap()
-            .unwrap();
-        assert!(phrase_scorer.advance());
-        assert_eq!(phrase_scorer.doc(), 1);
-        assert_eq!(phrase_scorer.phrase_count(), 2);
-        assert!(phrase_scorer.advance());
-        assert_eq!(phrase_scorer.doc(), 2);
-        assert_eq!(phrase_scorer.phrase_count(), 1);
-        assert!(!phrase_scorer.advance());
-    }
-
-    #[test]
     pub fn test_phrase_query_no_positions() {
         let mut schema_builder = Schema::builder();
         use crate::schema::IndexRecordOption;
@@ -151,21 +126,16 @@ mod tests {
             Term::from_field_text(text_field, "a"),
             Term::from_field_text(text_field, "b"),
         ]);
-        match searcher
+
+        let search_result = searcher
             .search(&phrase_query, &TEST_COLLECTOR_WITH_SCORE)
-            .map(|_| ())
-            .unwrap_err()
-        {
-            TantivyError::SchemaError(ref msg) => {
-                assert_eq!(
-                    "Applied phrase query on field \"text\", which does not have positions indexed",
-                    msg.as_str()
-                );
-            }
-            _ => {
-                panic!("Should have returned an error");
-            }
-        }
+            .map(|_| ());
+        assert!(matches!(
+            search_result,
+            Err(crate::TantivyError::SchemaError(msg))
+            if msg == "Applied phrase query on field \"text\", which does not have positions \
+            indexed"
+        ));
     }
 
     #[test]

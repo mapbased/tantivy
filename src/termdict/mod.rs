@@ -434,6 +434,7 @@ mod tests {
 
     #[test]
     fn test_automaton_search() {
+        use crate::query::DFAWrapper;
         use levenshtein_automata::LevenshteinAutomatonBuilder;
 
         const COUNTRIES: [&'static str; 7] = [
@@ -463,7 +464,7 @@ mod tests {
 
         // We can now build an entire dfa.
         let lev_automaton_builder = LevenshteinAutomatonBuilder::new(2, true);
-        let automaton = lev_automaton_builder.build_dfa("Spaen");
+        let automaton = DFAWrapper(lev_automaton_builder.build_dfa("Spaen"));
 
         let mut range = term_dict.search(automaton).into_stream();
 

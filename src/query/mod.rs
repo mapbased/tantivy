@@ -1,12 +1,11 @@
-/*!
-Query
-*/
+/*! Query Module */
 
 mod all_query;
 mod automaton_weight;
 mod bitset;
 mod bm25;
 mod boolean_query;
+mod boost_query;
 mod empty_query;
 mod exclude;
 mod explanation;
@@ -37,9 +36,12 @@ pub use self::all_query::{AllQuery, AllScorer, AllWeight};
 pub use self::automaton_weight::AutomatonWeight;
 pub use self::bitset::BitSetDocSet;
 pub use self::boolean_query::BooleanQuery;
+pub use self::boost_query::BoostQuery;
 pub use self::empty_query::{EmptyQuery, EmptyScorer, EmptyWeight};
 pub use self::exclude::Exclude;
 pub use self::explanation::Explanation;
+#[cfg(test)]
+pub(crate) use self::fuzzy_query::DFAWrapper;
 pub use self::fuzzy_query::FuzzyTermQuery;
 pub use self::intersection::intersect_scorers;
 pub use self::phrase_query::PhraseQuery;

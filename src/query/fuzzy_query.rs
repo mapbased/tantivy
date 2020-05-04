@@ -2,14 +2,40 @@ use crate::query::{AutomatonWeight, Query, Weight};
 use crate::schema::Term;
 use crate::Searcher;
 use crate::TantivyError::InvalidArgument;
-use levenshtein_automata::{LevenshteinAutomatonBuilder, DFA};
+use levenshtein_automata::{Distance, LevenshteinAutomatonBuilder, DFA};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::ops::Range;
+use tantivy_fst::Automaton;
+
+pub(crate) struct DFAWrapper(pub DFA);
+
+impl Automaton for DFAWrapper {
+    type State = u32;
+
+    fn start(&self) -> Self::State {
+        self.0.initial_state()
+    }
+
+    fn is_match(&self, state: &Self::State) -> bool {
+        match self.0.distance(*state) {
+            Distance::Exact(_) => true,
+            Distance::AtLeast(_) => false,
+        }
+    }
+
+    fn can_match(&self, state: &u32) -> bool {
+        *state != levenshtein_automata::SINK_STATE
+    }
+
+    fn accept(&self, state: &Self::State, byte: u8) -> Self::State {
+        self.0.transition(*state, byte)
+    }
+}
 
 /// A range of Levenshtein distances that we will build DFAs for our terms
 /// The computation is exponential, so best keep it to low single digits
-const VALID_LEVENSHTEIN_DISTANCE_RANGE: Range<u8> = (0..3);
+const VALID_LEVENSHTEIN_DISTANCE_RANGE: Range<u8> = 0..3;
 
 static LEV_BUILDER: Lazy<HashMap<(u8, bool), LevenshteinAutomatonBuilder>> = Lazy::new(|| {
     let mut lev_builder_cache = HashMap::new();
@@ -101,13 +127,20 @@ impl FuzzyTermQuery {
         }
     }
 
-    fn specialized_weight(&self) -> crate::Result<AutomatonWeight<DFA>> {
+    fn specialized_weight(&self) -> crate::Result<AutomatonWeight<DFAWrapper>> {
         // LEV_BUILDER is a HashMap, whose `get` method returns an Option
         match LEV_BUILDER.get(&(self.distance, false)) {
             // Unwrap the option and build the Ok(AutomatonWeight)
             Some(automaton_builder) => {
-                let automaton = automaton_builder.build_dfa(self.term.text());
-                Ok(AutomatonWeight::new(self.term.field(), automaton))
+                let automaton = if self.prefix {
+                    automaton_builder.build_prefix_dfa(self.term.text())
+                } else {
+                    automaton_builder.build_dfa(self.term.text())
+                };
+                Ok(AutomatonWeight::new(
+                    self.term.field(),
+                    DFAWrapper(automaton),
+                ))
             }
             None => Err(InvalidArgument(format!(
                 "Levenshtein distance of {} is not allowed. Choose a value in the {:?} range",
@@ -159,6 +192,18 @@ mod test {
             let term = Term::from_field_text(country_field, "japon");
 
             let fuzzy_query = FuzzyTermQuery::new(term, 1, true);
+            let top_docs = searcher
+                .search(&fuzzy_query, &TopDocs::with_limit(2))
+                .unwrap();
+            assert_eq!(top_docs.len(), 1, "Expected only 1 document");
+            let (score, _) = top_docs[0];
+            assert_nearly_equals(1f32, score);
+        }
+
+        {
+            let term = Term::from_field_text(country_field, "jap");
+
+            let fuzzy_query = FuzzyTermQuery::new_prefix(term, 1, true);
             let top_docs = searcher
                 .search(&fuzzy_query, &TopDocs::with_limit(2))
                 .unwrap();

@@ -1,9 +1,17 @@
+Tantivy 0.13.0
+======================
+- Bugfix in `FuzzyTermQuery` not matching terms by prefix when it should (@Peachball)
+- Relaxed constraints on the custom/tweak score functions. At the segment level, they can be mut, and they are not required to be Sync + Send.
+- `MMapDirectory::open` does not return a `Result` anymore.
+
 Tantivy 0.12.0
 ======================
 - Removing static dispatch in tokenizers for simplicity. (#762)
 - Added backward iteration for `TermDictionary` stream. (@halvorboe)
 - Fixed a performance issue when searching for the posting lists of a missing term (@audunhalland)
 - Added a configurable maximum number of docs (10M by default) for a segment to be considered for merge (@hntd187, landed by @halvorboe #713) 
+- Important Bugfix #777, causing tantivy to retain memory mapping. (diagnosed by @poljar)
+- Added support for field boosting. (#547, @fulmicoton)
 
 ## How to update?
 
